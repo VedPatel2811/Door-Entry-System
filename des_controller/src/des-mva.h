@@ -29,6 +29,8 @@ typedef enum {
 	EXIT = 12					//exit
 } State;
 
+typedef void *(*StateFunction)();
+
 #define NUM_OUTPUTS 13
 typedef enum {
 	IDLE_MSG = 1,
