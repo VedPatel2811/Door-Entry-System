@@ -8,7 +8,7 @@
 
 
 int main(void) {
-	Input msg;
+	Person msg;
 	int rcvid;
 
 	//Phase I
@@ -30,11 +30,11 @@ int main(void) {
 
 		MsgReply(rcvid, EOK, NULL, 0);
 
-		if (msg.message_type == LEFT_SCAN || msg.message_type ==  RIGHT_SCAN) {
+		if (msg.message_type == LEFT_SCAN_MSG  || msg.message_type ==  RIGHT_SCAN_MSG ) {
 			printf("%s %d\n", outMessage[msg.message_type - 1], msg.person_id);
-		} else if (msg.message_type == WEIGHT_SCAN) {
+		} else if (msg.message_type == WEIGHT_UPDATE_MSG ) {
 			printf("%s %d kg\n", outMessage[msg.message_type - 1], msg.weight);
-		} else if (msg.message_type == EXIT) {
+		} else if (msg.message_type == EXIT_MSG ) {
 			printf("%s\n", outMessage[msg.message_type - 1]);
 			break;
 		} else {
