@@ -1,267 +1,245 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <process.h>
 #include <unistd.h>
-#include <sys/neutrino.h>
-#include <sys/netmgr.h>
-#include <ctype.h>
 #include <errno.h>
-
+#include <sys/neutrino.h>
+#include <sys/dispatch.h>
+#include <sys/netmgr.h>
+#include <string.h>
+#include <stdbool.h>
 #include "des-mva.h"
 
-void show_usage(void);
+bool exiting = false;
+Person display_message;
+int child, rcvid, coid;
 
-void* ready_state();
-void* left_scan();
-void* right_scan();
-void* weight_measure();
-void* left_open();
-void* right_open();
-void* left_close();
-void* right_close();
-void* guard_right_lock();
-void* guard_right_unlock();
-void* guard_left_lock();
-void* guard_left_unlock();
-void* terminate_state();
+State handle_idle();
+State handle_left_scan();
+State handle_guard_left_unlock();
+State handle_left_open();
+State handle_weight_scan();
+State handle_left_close();
+State handle_guard_left_lock();
+State handle_guard_right_unlock();
+State handle_right_open();
+State handle_right_close();
+State handle_guard_right_lock();
+State handle_right_scan();
+State handle_exit();
 
-ControllerResponse response;
-Person person_message;
-int connection;
-StateFunction state_function = ready_state;
+void send_to_display(Output msg) {
+    display_message.message_type = msg;
+    if (MsgSend(coid, &display_message, sizeof(display_message), NULL, 0) == -1) {
+        perror("Message Send failure");
+        ChannelDestroy(child);
+        ConnectDetach(coid);
+        exit(EXIT_FAILURE);
+    }
+}
 
 int main(int argc, char *argv[]) {
-
-    pid_t display_pid;
-    int channel_id, received_msg_id;
-
     if (argc != 2) {
-        fprintf(stderr, "ERROR: Please match the arguments as requested.\n");
-        show_usage();
-        exit(EXIT_FAILURE);
+        fprintf(stderr, "Usage: %s <display_pid>\n", argv[0]);
+        return EXIT_FAILURE;
     }
 
-    display_pid = atoi(argv[1]);
+    pid_t display_pid = atoi(argv[1]);
 
-    // Creating communication channel
-    channel_id = ChannelCreate(0);
-    if (channel_id == -1) {
-        fprintf(stderr, "ERROR: Could not create channel.\n");
-        exit(EXIT_FAILURE);
+    child = ChannelCreate(0);
+    if (child == -1) {
+        perror("Channel Create failure");
+        return EXIT_FAILURE;
     }
 
-    connection = ConnectAttach(ND_LOCAL_NODE, display_pid, 1, _NTO_SIDE_CHANNEL, 0);
-    if (connection == -1) {
-        fprintf(stderr, "ERROR: Could not connect to the des_display. Did you specify the right PID?\n");
-        exit(EXIT_FAILURE);
+    printf("CalcServer PID : %d\n", getpid());
+
+    coid = ConnectAttach(ND_LOCAL_NODE, display_pid, 1, _NTO_SIDE_CHANNEL, 0);
+    if (coid == -1) {
+        perror("ConnectAttach failed");
+        return EXIT_FAILURE;
     }
 
-    printf("The controller is running as PID: %d \n", getpid());
-    person_message.person_id = 0;
-    person_message.weight = 0;
-    person_message.current_state = IDLE;
+    State current_state = IDLE;
+    State (*state_handler)(Person*) = handle_idle;
 
-    while (state_function != NULL) {
-        received_msg_id = MsgReceive(channel_id, (void*) &person_message, sizeof(person_message), NULL);
-
-        if (person_message.current_state == EXIT) {
-            terminate_state();
+    while (1) {
+        rcvid = MsgReceive(child, &display_message, sizeof(display_message), NULL);
+        if (rcvid == -1) {
+            perror("Message Receiving failure");
+            continue;
         }
+        MsgReply(rcvid, EOK, NULL, 0);
 
-        state_function = (StateFunction) (*state_function)();
+        current_state = state_handler(&display_message);
 
-        // Send response back to sender
-        response.status_code = EOK;
-        MsgReply(received_msg_id, EOK, &response, sizeof(response));
-
-        if (person_message.current_state == EXIT) {
-            break;
-        } else if (person_message.current_state == GUARD_RIGHT_LOCK || person_message.current_state == GUARD_LEFT_LOCK) {
-            person_message.person_id = 0;
-            person_message.weight = 0;
-            person_message.current_state = IDLE;
+        switch (current_state) {
+            case IDLE:
+                state_handler = handle_idle;
+                break;
+            case LEFT_SCAN:
+                state_handler = handle_left_scan;
+                break;
+            case GUARD_LEFT_UNLOCK:
+                state_handler = handle_guard_left_unlock;
+                break;
+            case LEFT_OPEN:
+                state_handler = handle_left_open;
+                break;
+            case WEIGHT_SCAN:
+                state_handler = handle_weight_scan;
+                break;
+            case LEFT_CLOSE:
+                state_handler = handle_left_close;
+                break;
+            case GUARD_LEFT_LOCK:
+                state_handler = handle_guard_left_lock;
+                break;
+            case GUARD_RIGHT_UNLOCK:
+                state_handler = handle_guard_right_unlock;
+                break;
+            case RIGHT_OPEN:
+                state_handler = handle_right_open;
+                break;
+            case RIGHT_CLOSE:
+                state_handler = handle_right_close;
+                break;
+            case GUARD_RIGHT_LOCK:
+                state_handler = handle_guard_right_lock;
+                break;
+            case RIGHT_SCAN:
+                state_handler = handle_right_scan;
+                break;
+            case EXIT:
+                state_handler = handle_exit;
+                break;
+            default:
+                fprintf(stderr, "Invalid state\n");
+                return EXIT_FAILURE;
+                break;
         }
     }
-
-    ChannelDestroy(channel_id);
-    ConnectDetach(connection);
+    ChannelDestroy(child);
+    ConnectDetach(coid);
     return EXIT_SUCCESS;
 }
 
-void show_usage(void) {
-    printf("   USAGE:\n");
-    printf("./des_controller <display-pid>\n");
+State handle_idle(Person* person) {
+    if (person->current_state == LEFT_SCAN) {
+        exiting = false;
+        send_to_display(LEFT_SCAN_MSG);
+        return LEFT_SCAN;
+    } else if (person->current_state == RIGHT_SCAN) {
+        exiting = true;
+        send_to_display(RIGHT_SCAN_MSG);
+        return RIGHT_SCAN;
+    }
+    return IDLE;
 }
 
-void* ready_state() {
-    if (person_message.current_state == LEFT_SCAN) {
-        if (MsgSend(connection, &person_message, sizeof(person_message), &response, sizeof(response)) == -1) {
-            fprintf(stderr, "ERROR: Could not send message.\n");
-            exit(EXIT_FAILURE);
-        }
-        return left_scan;
-    } else if (person_message.current_state == RIGHT_SCAN) {
-        if (MsgSend(connection, &person_message, sizeof(person_message), &response, sizeof(response)) == -1) {
-            fprintf(stderr, "ERROR: Could not send message.\n");
-            exit(EXIT_FAILURE);
-        }
-        return right_scan;
+State handle_left_scan(Person* person) {
+    if (person->current_state == GUARD_LEFT_UNLOCK) {
+        send_to_display(GUARD_LEFT_UNLOCK_MSG);
+        return GUARD_LEFT_UNLOCK;
     }
-    return ready_state;
+    return LEFT_SCAN;
 }
 
-void* left_scan() {
-    if (person_message.current_state == GUARD_LEFT_UNLOCK) {
-        if (MsgSend(connection, &person_message, sizeof(person_message), &response, sizeof(response)) == -1) {
-            fprintf(stderr, "ERROR: Could not send message.\n");
-            exit(EXIT_FAILURE);
-        }
-        return guard_left_unlock;
+State handle_guard_left_unlock(Person* person) {
+    if (person->current_state == LEFT_OPEN) {
+        send_to_display(LEFT_OPEN_MSG);
+        return LEFT_OPEN;
     }
-    return left_scan;
+    return GUARD_LEFT_UNLOCK;
 }
 
-void* right_scan() {
-    if (person_message.current_state == GUARD_RIGHT_UNLOCK) {
-        if (MsgSend(connection, &person_message, sizeof(person_message), &response, sizeof(response)) == -1) {
-            fprintf(stderr, "ERROR: Could not send message.\n");
-            exit(EXIT_FAILURE);
-        }
-        return guard_right_unlock;
+State handle_left_open(Person* person) {
+    if (person->current_state == WEIGHT_SCAN && !exiting) {
+        send_to_display(WEIGHT_UPDATE_MSG);
+        return WEIGHT_SCAN;
+    } else if (person->current_state == LEFT_CLOSE && exiting) {
+        send_to_display(LEFT_CLOSE_MSG);
+        return LEFT_CLOSE;
     }
-    return right_scan;
+    return LEFT_OPEN;
 }
 
-void* weight_measure() {
-    if (person_message.current_state == LEFT_CLOSE) {
-        if (MsgSend(connection, &person_message, sizeof(person_message), &response, sizeof(response)) == -1) {
-            fprintf(stderr, "ERROR: Could not send message.\n");
-            exit(EXIT_FAILURE);
-        }
-        return left_close;
-    } else if (person_message.current_state == RIGHT_CLOSE) {
-        if (MsgSend(connection, &person_message, sizeof(person_message), &response, sizeof(response)) == -1) {
-            fprintf(stderr, "ERROR: Could not send message.\n");
-            exit(EXIT_FAILURE);
-        }
-        return right_close;
+State handle_weight_scan(Person* person) {
+    if (person->current_state == LEFT_CLOSE && !exiting) {
+        send_to_display(LEFT_CLOSE_MSG);
+        return LEFT_CLOSE;
+    } else if (person->current_state == RIGHT_CLOSE && exiting) {
+        send_to_display(RIGHT_CLOSE_MSG);
+        return RIGHT_CLOSE;
     }
-    return weight_measure;
+    return WEIGHT_SCAN;
 }
 
-void* left_open() {
-    if (person_message.current_state == WEIGHT_SCAN) {
-        if (MsgSend(connection, &person_message, sizeof(person_message), &response, sizeof(response)) == -1) {
-            fprintf(stderr, "ERROR: Could not send message.\n");
-            exit(EXIT_FAILURE);
-        }
-        return weight_measure;
-    } else if (person_message.current_state == LEFT_CLOSE) {
-        if (MsgSend(connection, &person_message, sizeof(person_message), &response, sizeof(response)) == -1) {
-            fprintf(stderr, "ERROR: Could not send message.\n");
-            exit(EXIT_FAILURE);
-        }
-        return left_close;
+State handle_left_close(Person* person) {
+    if (person->current_state == GUARD_LEFT_LOCK) {
+        send_to_display(GUARD_LEFT_LOCK_MSG);
+        return GUARD_LEFT_LOCK;
     }
-    return left_open;
+    return LEFT_CLOSE;
 }
 
-void* right_open() {
-    if (person_message.current_state == WEIGHT_SCAN) {
-        if (MsgSend(connection, &person_message, sizeof(person_message), &response, sizeof(response)) == -1) {
-            fprintf(stderr, "ERROR: Could not send message.\n");
-            exit(EXIT_FAILURE);
-        }
-        return weight_measure;
-    } else if (person_message.current_state == RIGHT_CLOSE) {
-        if (MsgSend(connection, &person_message, sizeof(person_message), &response, sizeof(response)) == -1) {
-            fprintf(stderr, "ERROR: Could not send message.\n");
-            exit(EXIT_FAILURE);
-        }
-        return right_close;
+State handle_guard_left_lock(Person* person) {
+    if (person->current_state == GUARD_RIGHT_UNLOCK && !exiting) {
+        send_to_display(GUARD_RIGHT_UNLOCK_MSG);
+        return GUARD_RIGHT_UNLOCK;
+    } else if (person->current_state == EXIT && exiting) {
+        send_to_display(EXIT_MSG);
+        return EXIT;
     }
-    return right_open;
+    return GUARD_LEFT_LOCK;
 }
 
-void* left_close() {
-    if (person_message.current_state == GUARD_LEFT_LOCK) {
-        if (MsgSend(connection, &person_message, sizeof(person_message), &response, sizeof(response)) == -1) {
-            fprintf(stderr, "ERROR: Could not send message.\n");
-            exit(EXIT_FAILURE);
-        }
-        return guard_left_lock;
+State handle_guard_right_unlock(Person* person) {
+    if (person->current_state == RIGHT_OPEN) {
+        send_to_display(RIGHT_OPEN_MSG);
+        return RIGHT_OPEN;
     }
-    return left_close;
+    return GUARD_RIGHT_UNLOCK;
 }
 
-void* right_close() {
-    if (person_message.current_state == GUARD_RIGHT_LOCK) {
-        if (MsgSend(connection, &person_message, sizeof(person_message), &response, sizeof(response)) == -1) {
-            fprintf(stderr, "ERROR: Could not send message.\n");
-            exit(EXIT_FAILURE);
-        }
-        return guard_right_lock;
+State handle_right_open(Person* person) {
+    if (person->current_state == RIGHT_CLOSE && !exiting) {
+        send_to_display(RIGHT_CLOSE_MSG);
+        return RIGHT_CLOSE;
+    } else if (person->current_state == WEIGHT_SCAN && exiting) {
+        send_to_display(WEIGHT_UPDATE_MSG);
+        return WEIGHT_SCAN;
     }
-    return right_close;
+    return RIGHT_OPEN;
 }
 
-void* guard_right_lock() {
-    if (person_message.current_state == GUARD_LEFT_UNLOCK) {
-        if (MsgSend(connection, &person_message, sizeof(person_message), &response, sizeof(response)) == -1) {
-            fprintf(stderr, "ERROR: Could not send message.\n");
-            exit(EXIT_FAILURE);
-        }
-        return guard_left_unlock;
+State handle_right_close(Person* person) {
+    if (person->current_state == GUARD_RIGHT_LOCK) {
+        send_to_display(GUARD_RIGHT_LOCK_MSG);
+        return GUARD_RIGHT_LOCK;
     }
-    return guard_right_lock;
+    return RIGHT_CLOSE;
 }
 
-void* guard_right_unlock() {
-    if (person_message.current_state == RIGHT_OPEN) {
-        if (MsgSend(connection, &person_message, sizeof(person_message), &response, sizeof(response)) == -1) {
-            fprintf(stderr, "ERROR: Could not send message.\n");
-            exit(EXIT_FAILURE);
-        }
-        return right_open;
+State handle_guard_right_lock(Person* person) {
+    if (person->current_state == EXIT && !exiting) {
+        send_to_display(EXIT_MSG);
+        return EXIT;
+    } else if (person->current_state == GUARD_LEFT_UNLOCK && exiting) {
+        send_to_display(GUARD_LEFT_UNLOCK_MSG);
+        return GUARD_LEFT_UNLOCK;
     }
-    return guard_right_unlock;
+    return GUARD_RIGHT_LOCK;
 }
 
-void* guard_left_lock() {
-    if (person_message.current_state == GUARD_RIGHT_UNLOCK) {
-        if (MsgSend(connection, &person_message, sizeof(person_message), &response, sizeof(response)) == -1) {
-            fprintf(stderr, "ERROR: Could not send message.\n");
-            exit(EXIT_FAILURE);
-        }
-        return guard_right_unlock;
+State handle_right_scan(Person* person) {
+    if (person->current_state == GUARD_RIGHT_UNLOCK) {
+        send_to_display(GUARD_RIGHT_UNLOCK_MSG);
+        return GUARD_RIGHT_UNLOCK;
     }
-    return guard_left_lock;
+    return RIGHT_SCAN;
 }
 
-void* guard_left_unlock() {
-    if (person_message.current_state == LEFT_OPEN) {
-        if (MsgSend(connection, &person_message, sizeof(person_message), &response, sizeof(response)) == -1) {
-            fprintf(stderr, "ERROR: Could not send message.\n");
-            exit(EXIT_FAILURE);
-        }
-        return left_open;
-    }
-    return guard_left_unlock;
-}
-
-void* terminate_state() {
-    person_message.current_state = EXIT;
-
-    // Send the terminate message to des_display
-    if (MsgSend(connection, &person_message, sizeof(person_message), &response, sizeof(response)) == -1) {
-        fprintf(stderr, "ERROR: Could not send terminate message.\n");
-        exit(EXIT_FAILURE);
-    }
-
-    // Print termination status
-    printf("Controller: Terminating...\n");
-
-    // Break out of the loop by returning NULL
-    return NULL;
+State handle_exit(Person* person) {
+    send_to_display(EXIT_MSG);
+    return IDLE;
 }

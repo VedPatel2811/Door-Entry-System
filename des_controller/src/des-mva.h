@@ -33,19 +33,19 @@ typedef void *(*StateFunction)();
 
 #define NUM_OUTPUTS 13
 typedef enum {
-	IDLE_MSG = 1,
-	LEFT_SCAN_MSG = 2,
-	GUARD_LEFT_UNLOCK_MSG = 3,
-	LEFT_OPEN_MSG = 4,
-	WEIGHT_UPDATE_MSG = 5,
-	LEFT_CLOSE_MSG = 6,
-	GUARD_LEFT_LOCK_MSG = 7,
-	GUARD_RIGHT_UNLOCK_MSG = 8,
-	RIGHT_OPEN_MSG = 9,
-	RIGHT_CLOSE_MSG = 10,
-	GUARD_RIGHT_LOCK_MSG = 11,
-	RIGHT_SCAN_MSG = 12,
-	EXIT_MSG = 13,
+	IDLE_MSG = 0,
+	LEFT_SCAN_MSG = 1,
+	GUARD_LEFT_UNLOCK_MSG = 2,
+	LEFT_OPEN_MSG = 3,
+	WEIGHT_UPDATE_MSG = 4,
+	LEFT_CLOSE_MSG = 5,
+	GUARD_LEFT_LOCK_MSG = 6,
+	GUARD_RIGHT_UNLOCK_MSG = 7,
+	RIGHT_OPEN_MSG = 8,
+	RIGHT_CLOSE_MSG = 9,
+	GUARD_RIGHT_LOCK_MSG = 10,
+	RIGHT_SCAN_MSG = 11,
+	EXIT_MSG = 12,
 } Output;
 
 const char *outMessage[NUM_OUTPUTS] = {
@@ -63,17 +63,27 @@ const char *outMessage[NUM_OUTPUTS] = {
 		"Person scanned leaving with ID: ",				//rs
 		"Exit." };										//exit
 
+#define TOTAL_INPUTS 12
+const char *input_commands[TOTAL_INPUTS] = {
+	"ls",  // Left scan
+	"rs",  // Right scan
+	"ws",  // Weight scale
+	"lo",  // Left open
+	"ro",  // Right open
+	"lc",  // Left close
+	"rc",  // Right close
+	"grl", // Guard lock right
+	"gru", // Guard unlock right
+	"gll", // Guard lock left
+	"glu", // Guard unlock left
+	"terminate" // Terminate command
+};
+
 typedef struct {
 	Output message_type;
 	int person_id;
 	int weight;
 	int current_state;
 } Person;
-
-typedef struct {
-	Person individual;
-	int status_code;
-	char error_message[128];
-} ControllerResponse;
 
 #endif /* DES_MVA_H_ */

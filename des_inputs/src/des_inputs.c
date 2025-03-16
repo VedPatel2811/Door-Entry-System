@@ -6,84 +6,122 @@
 #include <errno.h>
 #include "../../des_controller/src/des-mva.h"
 
+int get_command_index(const char *input) {
+	for (int i = 0; i < TOTAL_INPUTS; i++) {
+		if (strcmp(input, input_commands[i]) == 0) {
+			return i;
+		}
+	}
+	return -1; // Invalid command
+}
+
 int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <controller_pid>\n", argv[0]);
-        exit(EXIT_FAILURE);
-    }
+	if (argc != 2) {
+		fprintf(stderr, "Usage: %s <controller_pid>\n", argv[0]);
+		return EXIT_FAILURE;
+	}
 
-    pid_t controller_pid = atoi(argv[1]);
+	pid_t controller_pid = atoi(argv[1]);
 
-    // Attach to the controller's channel
-    int coid = ConnectAttach(ND_LOCAL_NODE, controller_pid, 1, _NTO_SIDE_CHANNEL, 0);
-    if (coid == -1) {
-        perror("ConnectAttach failed");
-        exit(EXIT_FAILURE);
-    }
+	// Attach to the controller's channel
+	int coid = ConnectAttach(ND_LOCAL_NODE, controller_pid, 1,
+	_NTO_SIDE_CHANNEL, 0);
+	if (coid == -1) {
+		perror("ConnectAttach failed");
+		return EXIT_FAILURE;
+	}
 
-    printf("Connected to controller with PID: %d\n", controller_pid);
+	while (1) {
+		printf("\nSelect event from the following list:\n");
+		printf(" ls  - Left Scan\n");
+		printf(" rs  - Right Scan\n");
+		printf(" ws  - Weight Scale\n");
+		printf(" lo  - Left Open\n");
+		printf(" ro  - Right Open\n");
+		printf(" lc  - Left Close\n");
+		printf(" rc  - Right Close\n");
+		printf(" grl - Guard Right Lock\n");
+		printf(" gru - Guard Right Unlock\n");
+		printf(" gll - Guard Left Lock\n");
+		printf(" glu - Guard Left Unlock\n");
+		printf(" Exit - Exit the program\n");
+		printf("Enter choice: ");
 
-    while (1) {
-        char event[10];
-        Person person;
-        memset(&person, 0, sizeof(person));
+		char user_input[20];
+		Person person_message;
 
-        // Prompt for the event type
-        printf("Enter the event type (ls=left scan, rs=right scan, ws=weight scale, lo=left open, ro=right open, lc=left closed, rc=right closed, gru=guard right unlock, grl=guard right lock, gll=guard left lock, glu=guard left unlock, exit): ");
-        scanf("%s", event);
+		scanf("%19s", user_input);
 
-        if (strcmp(event, "exit") == 0) {
-            // Exit the loop and terminate the program
-            break;
-        }
+		int cmd_index = get_command_index(user_input);
 
-        // Handle different event types
-        if (strcmp(event, "ls") == 0) {
-            person.current_state = LEFT_SCAN;
-            printf("Enter the person_id: ");
-            scanf("%d", &person.person_id);
-        } else if (strcmp(event, "rs") == 0) {
-            person.current_state = RIGHT_SCAN;
-            printf("Enter the person_id: ");
-            scanf("%d", &person.person_id);
-        } else if (strcmp(event, "ws") == 0) {
-            person.current_state = WEIGHT_SCAN;
-            printf("Enter the weight: ");
-            scanf("%d", &person.weight);
-        } else if (strcmp(event, "lo") == 0) {
-            person.current_state = LEFT_OPEN;
-        } else if (strcmp(event, "ro") == 0) {
-            person.current_state = RIGHT_OPEN;
-        } else if (strcmp(event, "lc") == 0) {
-            person.current_state = LEFT_CLOSE;
-        } else if (strcmp(event, "rc") == 0) {
-            person.current_state = RIGHT_CLOSE;
-        } else if (strcmp(event, "gru") == 0) {
-            person.current_state = GUARD_RIGHT_UNLOCK;
-        } else if (strcmp(event, "grl") == 0) {
-            person.current_state = GUARD_RIGHT_LOCK;
-        } else if (strcmp(event, "gll") == 0) {
-            person.current_state = GUARD_LEFT_LOCK;
-        } else if (strcmp(event, "glu") == 0) {
-            person.current_state = GUARD_LEFT_UNLOCK;
-        } else {
-            fprintf(stderr, "Invalid event type: %s\n", event);
-            continue;
-        }
+		switch (cmd_index) {
+		case 0: // "ls"
+			person_message.current_state = LEFT_SCAN;
+			printf("Enter the Person's ID: ");
+			fflush(stdout);
+			scanf("%d", &person_message.person_id);
+			printf("\n");
+			break;
+		case 1: // "rs"
+			person_message.current_state = RIGHT_SCAN;
+			printf("Enter the Person's ID: ");
+			fflush(stdout);
+			scanf("%d", &person_message.person_id);
+			printf("\n");
+			break;
+		case 2: // "ws"
+			person_message.current_state = WEIGHT_SCAN;
+			printf("Enter the Person's Weight: ");
+			fflush(stdout);
+			scanf("%d", &person_message.weight);
+			printf("\n");
+			break;
+		case 3: // "lo"
+			person_message.current_state = LEFT_OPEN;
+			break;
+		case 4: // "ro"
+			person_message.current_state = RIGHT_OPEN;
+			break;
+		case 5: // "lc"
+			person_message.current_state = LEFT_CLOSE;
+			break;
+		case 6: // "rc"
+			person_message.current_state = RIGHT_CLOSE;
+			break;
+		case 7: // "grl"
+			person_message.current_state = GUARD_RIGHT_LOCK;
+			break;
+		case 8: // "gru"
+			person_message.current_state = GUARD_RIGHT_UNLOCK;
+			break;
+		case 9: // "gll"
+			person_message.current_state = GUARD_LEFT_LOCK;
+			break;
+		case 10: // "glu"
+			person_message.current_state = GUARD_LEFT_UNLOCK;
+			break;
+		case 11: // "terminate"
+			person_message.current_state = EXIT;
+			break; // Exit the program
+		default:
+			printf("Invalid command. Please try again.\n");
+		}
 
-        // Send the Person object to the controller
-        if (MsgSend(coid, &person, sizeof(person), NULL, 0) == -1) {
-            perror("MsgSend failed");
-            ConnectDetach(coid);
-            exit(EXIT_FAILURE);
-        }
+		// Send the Person object to the controller
+		if (MsgSend(coid, &person_message, sizeof(person_message), NULL, 0) == -1) {
+			perror("MsgSend failed");
+			ConnectDetach(coid);
+			exit(EXIT_FAILURE);
+		}
+		if(person_message.current_state == EXIT){
+			break;
+		}
 
-        printf("Event sent to controller: %s\n", event);
-    }
+	}
 
-    // Detach from the controller's channel
-    ConnectDetach(coid);
-    printf("Disconnected from controller. Exiting...\n");
+	// Detach from the controller's channel
+	ConnectDetach(coid);
+	printf("Disconnected from controller. Exiting...\n");
 
-    return EXIT_SUCCESS;
+	return EXIT_SUCCESS;
 }
