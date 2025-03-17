@@ -29,7 +29,6 @@ typedef enum {
 	EXIT = 12					//exit
 } State;
 
-typedef void *(*StateFunction)();
 
 #define NUM_OUTPUTS 13
 typedef enum {
@@ -49,7 +48,7 @@ typedef enum {
 } Output;
 
 const char *outMessage[NUM_OUTPUTS] = {
-		"System is idle."
+		"System is idle.",
 		"Person scanned entering with ID: ",			//ls
 		"Guard unlocked the left door.",				//glu
 		"Left door is now open.",						//lo
@@ -76,7 +75,7 @@ const char *input_commands[TOTAL_INPUTS] = {
 	"gru", // Guard unlock right
 	"gll", // Guard lock left
 	"glu", // Guard unlock left
-	"terminate" // Terminate command
+	"Exit" // Terminate command
 };
 
 typedef struct {

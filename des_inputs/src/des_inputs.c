@@ -45,7 +45,7 @@ int main(int argc, char *argv[]) {
 		printf(" gll - Guard Left Lock\n");
 		printf(" glu - Guard Left Unlock\n");
 		printf(" Exit - Exit the program\n");
-		printf("Enter choice: ");
+		printf("Enter choice: \n");
 
 		char user_input[20];
 		Person person_message;

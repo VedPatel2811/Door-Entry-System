@@ -9,237 +9,222 @@
 #include <stdbool.h>
 #include "des-mva.h"
 
-bool exiting = false;
-Person display_message;
-int child, rcvid, coid;
+static State current_state = IDLE;
+static int display_coid;
+bool returning = false;
+bool finalExit = false;
 
-State handle_idle();
-State handle_left_scan();
-State handle_guard_left_unlock();
-State handle_left_open();
-State handle_weight_scan();
-State handle_left_close();
-State handle_guard_left_lock();
-State handle_guard_right_unlock();
-State handle_right_open();
-State handle_right_close();
-State handle_guard_right_lock();
-State handle_right_scan();
-State handle_exit();
+State handle_idle(Person *event);
+State handle_guard_left_unlock(Person *event);
+State handle_left_open(Person *event);
+State handle_weight_scan(Person *event);
+State handle_left_close(Person *event);
+State handle_guard_left_lock(Person *event);
+State handle_guard_right_unlock(Person *event);
+State handle_right_open(Person *event);
+State handle_right_close(Person *event);
+State handle_guard_right_lock(Person *event);
+State handle_exit(Person *event);
 
-void send_to_display(Output msg) {
-    display_message.message_type = msg;
-    if (MsgSend(coid, &display_message, sizeof(display_message), NULL, 0) == -1) {
-        perror("Message Send failure");
-        ChannelDestroy(child);
-        ConnectDetach(coid);
-        exit(EXIT_FAILURE);
-    }
+void send_display_update(Output msg_type, int data) {
+	Person display_msg = { .message_type = msg_type, .person_id = data,
+			.weight = data };
+
+	if (MsgSend(display_coid, &display_msg, sizeof(display_msg), NULL, 0)
+			== -1) {
+		perror("MsgSend to display failed");
+	}
+}
+
+State handle_idle(Person *event) {
+	switch (event->current_state) {
+	case LEFT_SCAN:
+		returning = false;
+		send_display_update(LEFT_SCAN_MSG, event->person_id);
+				return GUARD_LEFT_UNLOCK;
+
+	case RIGHT_SCAN:
+		returning = true;
+		send_display_update(RIGHT_SCAN_MSG, event->person_id);
+				return GUARD_RIGHT_UNLOCK;
+
+	default:
+		return IDLE;
+	}
+}
+
+State handle_guard_left_unlock(Person *event) {
+	if (event->current_state == GUARD_LEFT_UNLOCK) {
+		send_display_update(GUARD_LEFT_UNLOCK_MSG, 0);
+		return LEFT_OPEN;
+	}
+	return GUARD_LEFT_UNLOCK;
+}
+
+State handle_left_open(Person *event) {
+	if (event->current_state == LEFT_OPEN && returning == false) {
+		send_display_update(LEFT_OPEN_MSG, 0);
+		return WEIGHT_SCAN;
+	} else if (event->current_state == LEFT_OPEN && returning == true) {
+		send_display_update(LEFT_OPEN_MSG, 0);
+		return LEFT_CLOSE;
+	}
+	return LEFT_OPEN;
+}
+
+State handle_weight_scan(Person *event) {
+	if (event->current_state == WEIGHT_SCAN && returning == false) {
+		send_display_update(WEIGHT_UPDATE_MSG, event->weight);
+		return LEFT_CLOSE;
+	} else if (event->current_state == WEIGHT_SCAN && returning == true) {
+		send_display_update(WEIGHT_UPDATE_MSG, event->weight);
+		return RIGHT_CLOSE;
+	}
+	return WEIGHT_SCAN;
+}
+
+State handle_left_close(Person *event) {
+	if (event->current_state == LEFT_CLOSE) {
+		send_display_update(LEFT_CLOSE_MSG, 0);
+		return GUARD_LEFT_LOCK;
+	}
+	return LEFT_CLOSE;
+}
+
+State handle_guard_left_lock(Person *event) {
+	if (event->current_state == GUARD_LEFT_LOCK && returning == false) {
+		send_display_update(GUARD_LEFT_LOCK_MSG, 0);
+		return GUARD_RIGHT_UNLOCK;
+	} else if (event->current_state == GUARD_LEFT_LOCK && returning == true) {
+		send_display_update(GUARD_LEFT_LOCK_MSG, 0);
+		return EXIT;
+	}
+	return GUARD_LEFT_LOCK;
+}
+
+State handle_guard_right_unlock(Person *event) {
+	if (event->current_state == GUARD_RIGHT_UNLOCK) {
+		send_display_update(GUARD_RIGHT_UNLOCK_MSG, 0);
+		return RIGHT_OPEN;
+	}
+	return GUARD_RIGHT_UNLOCK;
+}
+State handle_right_open(Person *event) {
+	if (event->current_state == RIGHT_OPEN && returning == false) {
+		send_display_update(RIGHT_OPEN_MSG, 0);
+		return RIGHT_CLOSE;
+	} else if (event->current_state == RIGHT_OPEN && returning == true) {
+		send_display_update(RIGHT_OPEN_MSG, 0);
+		return WEIGHT_SCAN;
+	}
+	return RIGHT_OPEN;
+}
+State handle_right_close(Person *event) {
+	if (event->current_state == RIGHT_CLOSE) {
+		send_display_update(RIGHT_CLOSE_MSG, 0);
+		return GUARD_RIGHT_LOCK;
+	}
+	return RIGHT_CLOSE;
+}
+State handle_guard_right_lock(Person *event) {
+	if (event->current_state == GUARD_RIGHT_LOCK && returning == false) {
+		send_display_update(GUARD_RIGHT_LOCK_MSG, 0);
+		return EXIT;
+	} else if (event->current_state == GUARD_RIGHT_LOCK && returning == true) {
+		send_display_update(GUARD_RIGHT_LOCK_MSG, 0);
+		return GUARD_LEFT_UNLOCK;
+	}
+	return GUARD_RIGHT_LOCK;
+}
+State handle_exit(Person *event) {
+	if (event->current_state == EXIT) {
+		send_display_update(EXIT_MSG, 0);
+		finalExit = true;
+		return EXIT;
+	} else if (event->current_state == RIGHT_SCAN && returning == false) {
+		returning = true;
+		send_display_update(RIGHT_SCAN_MSG, event->person_id);
+		return GUARD_RIGHT_UNLOCK;
+	}
+	return EXIT;
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <display_pid>\n", argv[0]);
-        return EXIT_FAILURE;
-    }
+	if (argc != 2) {
+		fprintf(stderr, "Usage: %s <display_pid>\n", argv[0]);
+		return EXIT_FAILURE;
+	}
 
-    pid_t display_pid = atoi(argv[1]);
+	pid_t display_pid = atoi(argv[1]);
 
-    child = ChannelCreate(0);
-    if (child == -1) {
-        perror("Channel Create failure");
-        return EXIT_FAILURE;
-    }
+	int chid = ChannelCreate(0);
+	if (chid == -1) {
+		perror("ChannelCreate failed");
+		return EXIT_FAILURE;
+	}
 
-    printf("CalcServer PID : %d\n", getpid());
+	printf("Controller PID: %d\n", getpid());
 
-    coid = ConnectAttach(ND_LOCAL_NODE, display_pid, 1, _NTO_SIDE_CHANNEL, 0);
-    if (coid == -1) {
-        perror("ConnectAttach failed");
-        return EXIT_FAILURE;
-    }
+	display_coid = ConnectAttach(ND_LOCAL_NODE, display_pid, 1,
+	_NTO_SIDE_CHANNEL, 0);
+	if (display_coid == -1) {
+		perror("ConnectAttach to display failed");
+		return EXIT_FAILURE;
+	}
 
-    State current_state = IDLE;
-    State (*state_handler)(Person*) = handle_idle;
+	Person event;
+	int rcvid;
 
-    while (1) {
-        rcvid = MsgReceive(child, &display_message, sizeof(display_message), NULL);
-        if (rcvid == -1) {
-            perror("Message Receiving failure");
-            continue;
-        }
-        MsgReply(rcvid, EOK, NULL, 0);
+	while (1) {
+		rcvid = MsgReceive(chid, &event, sizeof(event), NULL);
 
-        current_state = state_handler(&display_message);
+		switch (current_state) {
+		case IDLE:
+			current_state = handle_idle(&event);
+			break;
+		case GUARD_LEFT_UNLOCK:
+			current_state = handle_guard_left_unlock(&event);
+			break;
+		case LEFT_OPEN:
+			current_state = handle_left_open(&event);
+			break;
+		case WEIGHT_SCAN:
+			current_state = handle_weight_scan(&event);
+			break;
+		case LEFT_CLOSE:
+			current_state = handle_left_close(&event);
+			break;
+		case GUARD_LEFT_LOCK:
+			current_state = handle_guard_left_lock(&event);
+			break;
+		case GUARD_RIGHT_UNLOCK:
+			current_state = handle_guard_right_unlock(&event);
+			break;
+		case RIGHT_OPEN:
+			current_state = handle_right_open(&event);
+			break;
+		case RIGHT_CLOSE:
+			current_state = handle_right_close(&event);
+			break;
+		case GUARD_RIGHT_LOCK:
+			current_state = handle_guard_right_lock(&event);
+			break;
+		case EXIT:
+			current_state = handle_exit(&event);
+			break;
+		default:
+			current_state = IDLE;
+			break;
+		}
 
-        switch (current_state) {
-            case IDLE:
-                state_handler = handle_idle;
-                break;
-            case LEFT_SCAN:
-                state_handler = handle_left_scan;
-                break;
-            case GUARD_LEFT_UNLOCK:
-                state_handler = handle_guard_left_unlock;
-                break;
-            case LEFT_OPEN:
-                state_handler = handle_left_open;
-                break;
-            case WEIGHT_SCAN:
-                state_handler = handle_weight_scan;
-                break;
-            case LEFT_CLOSE:
-                state_handler = handle_left_close;
-                break;
-            case GUARD_LEFT_LOCK:
-                state_handler = handle_guard_left_lock;
-                break;
-            case GUARD_RIGHT_UNLOCK:
-                state_handler = handle_guard_right_unlock;
-                break;
-            case RIGHT_OPEN:
-                state_handler = handle_right_open;
-                break;
-            case RIGHT_CLOSE:
-                state_handler = handle_right_close;
-                break;
-            case GUARD_RIGHT_LOCK:
-                state_handler = handle_guard_right_lock;
-                break;
-            case RIGHT_SCAN:
-                state_handler = handle_right_scan;
-                break;
-            case EXIT:
-                state_handler = handle_exit;
-                break;
-            default:
-                fprintf(stderr, "Invalid state\n");
-                return EXIT_FAILURE;
-                break;
-        }
-    }
-    ChannelDestroy(child);
-    ConnectDetach(coid);
-    return EXIT_SUCCESS;
-}
+		MsgReply(rcvid, EOK, NULL, 0);
 
-State handle_idle(Person* person) {
-    if (person->current_state == LEFT_SCAN) {
-        exiting = false;
-        send_to_display(LEFT_SCAN_MSG);
-        return LEFT_SCAN;
-    } else if (person->current_state == RIGHT_SCAN) {
-        exiting = true;
-        send_to_display(RIGHT_SCAN_MSG);
-        return RIGHT_SCAN;
-    }
-    return IDLE;
-}
+		if (finalExit) {
+			break;
+		}
+	}
 
-State handle_left_scan(Person* person) {
-    if (person->current_state == GUARD_LEFT_UNLOCK) {
-        send_to_display(GUARD_LEFT_UNLOCK_MSG);
-        return GUARD_LEFT_UNLOCK;
-    }
-    return LEFT_SCAN;
-}
-
-State handle_guard_left_unlock(Person* person) {
-    if (person->current_state == LEFT_OPEN) {
-        send_to_display(LEFT_OPEN_MSG);
-        return LEFT_OPEN;
-    }
-    return GUARD_LEFT_UNLOCK;
-}
-
-State handle_left_open(Person* person) {
-    if (person->current_state == WEIGHT_SCAN && !exiting) {
-        send_to_display(WEIGHT_UPDATE_MSG);
-        return WEIGHT_SCAN;
-    } else if (person->current_state == LEFT_CLOSE && exiting) {
-        send_to_display(LEFT_CLOSE_MSG);
-        return LEFT_CLOSE;
-    }
-    return LEFT_OPEN;
-}
-
-State handle_weight_scan(Person* person) {
-    if (person->current_state == LEFT_CLOSE && !exiting) {
-        send_to_display(LEFT_CLOSE_MSG);
-        return LEFT_CLOSE;
-    } else if (person->current_state == RIGHT_CLOSE && exiting) {
-        send_to_display(RIGHT_CLOSE_MSG);
-        return RIGHT_CLOSE;
-    }
-    return WEIGHT_SCAN;
-}
-
-State handle_left_close(Person* person) {
-    if (person->current_state == GUARD_LEFT_LOCK) {
-        send_to_display(GUARD_LEFT_LOCK_MSG);
-        return GUARD_LEFT_LOCK;
-    }
-    return LEFT_CLOSE;
-}
-
-State handle_guard_left_lock(Person* person) {
-    if (person->current_state == GUARD_RIGHT_UNLOCK && !exiting) {
-        send_to_display(GUARD_RIGHT_UNLOCK_MSG);
-        return GUARD_RIGHT_UNLOCK;
-    } else if (person->current_state == EXIT && exiting) {
-        send_to_display(EXIT_MSG);
-        return EXIT;
-    }
-    return GUARD_LEFT_LOCK;
-}
-
-State handle_guard_right_unlock(Person* person) {
-    if (person->current_state == RIGHT_OPEN) {
-        send_to_display(RIGHT_OPEN_MSG);
-        return RIGHT_OPEN;
-    }
-    return GUARD_RIGHT_UNLOCK;
-}
-
-State handle_right_open(Person* person) {
-    if (person->current_state == RIGHT_CLOSE && !exiting) {
-        send_to_display(RIGHT_CLOSE_MSG);
-        return RIGHT_CLOSE;
-    } else if (person->current_state == WEIGHT_SCAN && exiting) {
-        send_to_display(WEIGHT_UPDATE_MSG);
-        return WEIGHT_SCAN;
-    }
-    return RIGHT_OPEN;
-}
-
-State handle_right_close(Person* person) {
-    if (person->current_state == GUARD_RIGHT_LOCK) {
-        send_to_display(GUARD_RIGHT_LOCK_MSG);
-        return GUARD_RIGHT_LOCK;
-    }
-    return RIGHT_CLOSE;
-}
-
-State handle_guard_right_lock(Person* person) {
-    if (person->current_state == EXIT && !exiting) {
-        send_to_display(EXIT_MSG);
-        return EXIT;
-    } else if (person->current_state == GUARD_LEFT_UNLOCK && exiting) {
-        send_to_display(GUARD_LEFT_UNLOCK_MSG);
-        return GUARD_LEFT_UNLOCK;
-    }
-    return GUARD_RIGHT_LOCK;
-}
-
-State handle_right_scan(Person* person) {
-    if (person->current_state == GUARD_RIGHT_UNLOCK) {
-        send_to_display(GUARD_RIGHT_UNLOCK_MSG);
-        return GUARD_RIGHT_UNLOCK;
-    }
-    return RIGHT_SCAN;
-}
-
-State handle_exit(Person* person) {
-    send_to_display(EXIT_MSG);
-    return IDLE;
+	ConnectDetach(display_coid);
+	ChannelDestroy(chid);
+	return EXIT_SUCCESS;
 }

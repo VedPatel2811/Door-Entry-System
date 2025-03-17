@@ -31,14 +31,14 @@ int main(void) {
 		MsgReply(rcvid, EOK, NULL, 0);
 
 		if (msg.message_type == LEFT_SCAN_MSG  || msg.message_type ==  RIGHT_SCAN_MSG ) {
-			printf("%s %d\n", outMessage[msg.message_type - 1], msg.person_id);
+			printf("%s %d\n", outMessage[msg.message_type], msg.person_id);
 		} else if (msg.message_type == WEIGHT_UPDATE_MSG ) {
-			printf("%s %d kg\n", outMessage[msg.message_type - 1], msg.weight);
+			printf("%s %d kg\n", outMessage[msg.message_type], msg.weight);
 		} else if (msg.message_type == EXIT_MSG ) {
-			printf("%s\n", outMessage[msg.message_type - 1]);
+			printf("%s\n", outMessage[msg.message_type]);
 			break;
 		} else {
-			printf("%s\n", outMessage[msg.message_type - 1]);
+			printf("%s\n", outMessage[msg.message_type]);
 		}
 	}
 
